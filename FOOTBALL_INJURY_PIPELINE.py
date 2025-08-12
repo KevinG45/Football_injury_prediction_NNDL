@@ -55,7 +55,7 @@ def preprocess_data(df, features, target, task_type='regression'):
     # Split data
     X_train, X_test, y_train, y_test = train_test_split(X_scaled, y, test_size=0.2, random_state=42)
     
-    return X_train, X_test, y_train, y_test, scaler
+    return X_train, X_test, y_train, y_test, scaler, clean_df
 
 ###########################################
 # ANN MODEL
@@ -432,7 +432,7 @@ elif page == "ANN Model":
         task_type = task.lower()
         
         with st.spinner("Training ANN..."):
-            X_train, X_test, y_train, y_test, scaler = preprocess_data(df, CORE_FEATURES, target, task_type)
+            X_train, X_test, y_train, y_test, scaler, _ = preprocess_data(df, CORE_FEATURES, target, task_type)
             model, history = train_ann(X_train, y_train, task_type)
             
             y_pred = model.predict(X_test, verbose=0)
@@ -501,7 +501,7 @@ elif page == "Autoencoder":
     
     if st.button("Train Autoencoder"):
         with st.spinner("Training autoencoder..."):
-            X_train, X_test, _, _, scaler = preprocess_data(df, CORE_FEATURES, TARGET_REGRESSION)
+            X_train, X_test, _, _, scaler, clean_df = preprocess_data(df, CORE_FEATURES, TARGET_REGRESSION)
             
             # Train autoencoder
             autoencoder, encoder, history = train_autoencoder(X_train)
@@ -537,7 +537,7 @@ elif page == "Autoencoder":
         # Use first 2 dimensions for visualization
         fig, ax = plt.subplots(figsize=(10, 8))
         scatter = ax.scatter(encoded_features[:, 0], encoded_features[:, 1], 
-                           c=df[TARGET_REGRESSION].values, cmap='viridis', alpha=0.6)
+                           c=clean_df[TARGET_REGRESSION].values, cmap='viridis', alpha=0.6)
         ax.set_xlabel('Encoded Feature 1')
         ax.set_ylabel('Encoded Feature 2')
         ax.set_title('Encoded Feature Space')
@@ -550,7 +550,7 @@ elif page == "1D CNN Model":
     
     if st.button("Train 1D CNN Model"):
         with st.spinner("Training 1D CNN..."):
-            X_train, X_test, y_train, y_test, scaler = preprocess_data(df, CORE_FEATURES, TARGET_REGRESSION)
+            X_train, X_test, y_train, y_test, scaler, _ = preprocess_data(df, CORE_FEATURES, TARGET_REGRESSION)
             
             # Train model
             model, history = train_1d_cnn(X_train, y_train)
@@ -579,7 +579,7 @@ elif page == "RBM Model":
     
     if st.button("Train RBM + ANN Model"):
         with st.spinner("Training RBM and ANN..."):
-            X_train, X_test, y_train, y_test, scaler = preprocess_data(df, CORE_FEATURES, TARGET_REGRESSION)
+            X_train, X_test, y_train, y_test, scaler, _ = preprocess_data(df, CORE_FEATURES, TARGET_REGRESSION)
             
             # Train RBM + ANN
             rbm, ann_model, rbm_errors, ann_history = train_rbm_with_ann(X_train, y_train)
@@ -620,7 +620,7 @@ elif page == "Model Comparison":
         results = {}
         
         with st.spinner("Training all models..."):
-            X_train, X_test, y_train, y_test, scaler = preprocess_data(df, CORE_FEATURES, TARGET_REGRESSION)
+            X_train, X_test, y_train, y_test, scaler, _ = preprocess_data(df, CORE_FEATURES, TARGET_REGRESSION)
             
             # ANN
             st.write("Training ANN...")
