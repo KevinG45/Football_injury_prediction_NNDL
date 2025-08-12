@@ -1,0 +1,43 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# PyCharm
+.idea/
+
+# VS Code
+.vscode/
+
+# Temporary files
+/tmp/
+*.tmp
+*.log
+
+# Model artifacts
+*.h5
+*.pkl
+*.joblib
+
+# Data files (if large)
+# dataset.csv
+
+# Streamlit
+.streamlit/
+
+# MacOS
+.DS_Store
+
+# Windows
+Thumbs.db
+ehthumbs.db
