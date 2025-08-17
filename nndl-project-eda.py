@@ -8,7 +8,7 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 
 # ===== 1. DATA LOADING & BASIC INFO =====
-df = pd.read_csv(r"C:\Users\kmgs4\Documents\Christ Uni\trimester 4\nndl\project\dataset.csv")
+df = pd.read_csv("dataset.csv")
 
 print("=== DATASET OVERVIEW ===")
 print(f"Shape: {df.shape}")
