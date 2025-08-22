@@ -186,17 +186,18 @@ def create_transformer_model(seq_len, n_features, d_model=64, num_heads=4,
 def create_attention_lstm(seq_len, n_features, lstm_units=64, 
                          dropout_rate=0.3, task_type='classification'):
     """Create LSTM with attention mechanism"""
+    from tensorflow.keras.layers import Lambda
     inputs = Input(shape=(seq_len, n_features))
     
     # Bidirectional LSTM
     lstm_out = Bidirectional(LSTM(lstm_units, return_sequences=True, dropout=dropout_rate))(inputs)
     
-    # Attention mechanism
+    # Attention mechanism using Lambda layers
     attention_weights = Dense(1, activation='tanh')(lstm_out)
-    attention_weights = tf.nn.softmax(attention_weights, axis=1)
+    attention_weights = Lambda(lambda x: tf.nn.softmax(x, axis=1))(attention_weights)
     
-    # Apply attention
-    attended_output = tf.reduce_sum(lstm_out * attention_weights, axis=1)
+    # Apply attention using Lambda layer
+    attended_output = Lambda(lambda x: tf.reduce_sum(x[0] * x[1], axis=1))([lstm_out, attention_weights])
     
     # Dense layers
     x = Dense(64, activation='relu')(attended_output)
