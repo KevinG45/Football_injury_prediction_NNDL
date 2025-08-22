@@ -1,0 +1,81 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual environments
+venv/
+env/
+ENV/
+.venv/
+.env/
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# TensorFlow/Keras
+*.h5
+*.hdf5
+model_weights/
+tensorboard_logs/
+
+# Streamlit
+.streamlit/
+
+# Data files (keep only sample data)
+*.csv
+!dataset.csv
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+*.log
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Screenshots and outputs
+screenshots/
+outputs/
+*.png
+*.jpg
+*.jpeg
+*.gif
+
+# Model artifacts
+saved_models/
+checkpoints/
+*.pkl
+*.joblib

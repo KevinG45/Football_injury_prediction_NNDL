@@ -17,10 +17,20 @@ warnings.filterwarnings('ignore')
 
 try:
     import tensorflow as tf
-    from tensorflow.keras.models import Sequential
-    from tensorflow.keras.layers import Dense, Dropout, LSTM, BatchNormalization
+    from tensorflow.keras.models import Sequential, Model
+    from tensorflow.keras.layers import (
+        Dense, Dropout, LSTM, BatchNormalization, LayerNormalization,
+        MultiHeadAttention, Input, GlobalAveragePooling1D, Add,
+        Embedding, Concatenate, Conv1D, MaxPooling1D, Flatten,
+        GRU, Bidirectional, TimeDistributed
+    )
     from tensorflow.keras.optimizers import Adam, SGD, RMSprop
-    from tensorflow.keras.callbacks import EarlyStopping, ReduceLROnPlateau
+    from tensorflow.keras.callbacks import (
+        EarlyStopping, ReduceLROnPlateau, LearningRateScheduler,
+        ModelCheckpoint, Callback
+    )
+    from tensorflow.keras.initializers import GlorotUniform
+    from tensorflow.keras.regularizers import l1_l2
     TF_AVAILABLE = True
 except:
     TF_AVAILABLE = False
@@ -42,6 +52,8 @@ page = st.sidebar.radio(
         "Baseline Models",
         "LSTM Model",
         "Medical ANN",
+        "Advanced NNDL Models",
+        "Model Ensemble",
         "Model Comparison",
         "Feature Importance"
     ]
@@ -60,6 +72,209 @@ DERIVED_FEATURES = [
     'age_squared', 'minutes_per_age', 'prev_injury_indicator', 'high_cumulative_injury'
 ]
 ALL_FEATURES = BASE_FEATURES + DERIVED_FEATURES
+
+# Advanced Neural Network Components
+class PositionalEncoding:
+    """Positional encoding for transformer models"""
+    def __init__(self, seq_len, d_model):
+        self.seq_len = seq_len
+        self.d_model = d_model
+    
+    def __call__(self, x):
+        # Simple learned positional encoding
+        pos_embedding = tf.Variable(
+            tf.random.normal([1, self.seq_len, self.d_model], 
+                           stddev=0.1, dtype=tf.float32),
+            trainable=True, name="positional_encoding"
+        )
+        return x + pos_embedding
+
+class TransformerBlock:
+    """Transformer encoder block"""
+    def __init__(self, d_model, num_heads, ff_dim, dropout_rate=0.1):
+        self.d_model = d_model
+        self.num_heads = num_heads
+        self.ff_dim = ff_dim
+        self.dropout_rate = dropout_rate
+    
+    def __call__(self, inputs):
+        # Multi-head attention
+        attention_output = MultiHeadAttention(
+            num_heads=self.num_heads, 
+            key_dim=self.d_model // self.num_heads,
+            dropout=self.dropout_rate
+        )(inputs, inputs)
+        
+        # Add & Norm
+        attention_output = Dropout(self.dropout_rate)(attention_output)
+        out1 = Add()([inputs, attention_output])
+        out1 = LayerNormalization()(out1)
+        
+        # Feed Forward Network
+        ffn_output = Dense(self.ff_dim, activation='relu')(out1)
+        ffn_output = Dropout(self.dropout_rate)(ffn_output)
+        ffn_output = Dense(self.d_model)(ffn_output)
+        
+        # Add & Norm
+        ffn_output = Dropout(self.dropout_rate)(ffn_output)
+        out2 = Add()([out1, ffn_output])
+        out2 = LayerNormalization()(out2)
+        
+        return out2
+
+class LearningRateWarmup(LearningRateScheduler):
+    """Learning rate warmup scheduler"""
+    def __init__(self, warmup_steps, peak_lr, total_steps):
+        self.warmup_steps = warmup_steps
+        self.peak_lr = peak_lr
+        self.total_steps = total_steps
+        
+        def lr_schedule(epoch):
+            if epoch < self.warmup_steps:
+                return self.peak_lr * (epoch + 1) / self.warmup_steps
+            else:
+                return self.peak_lr * (1 - (epoch - self.warmup_steps) / (self.total_steps - self.warmup_steps))
+        
+        super().__init__(lr_schedule, verbose=1)
+
+class AttentionVisualizationCallback(Callback):
+    """Callback to store attention weights for visualization"""
+    def __init__(self):
+        self.attention_weights = []
+    
+    def on_epoch_end(self, epoch, logs=None):
+        # Store attention weights if available
+        for layer in self.model.layers:
+            if hasattr(layer, 'attention_weights'):
+                self.attention_weights.append(layer.attention_weights)
+
+def create_transformer_model(seq_len, n_features, d_model=64, num_heads=4, 
+                           ff_dim=128, num_layers=2, dropout_rate=0.1, 
+                           task_type='classification'):
+    """Create a Transformer model for injury prediction"""
+    inputs = Input(shape=(seq_len, n_features))
+    
+    # Input projection
+    x = Dense(d_model)(inputs)
+    
+    # Positional encoding
+    pos_enc = PositionalEncoding(seq_len, d_model)
+    x = pos_enc(x)
+    
+    # Transformer blocks
+    for _ in range(num_layers):
+        transformer_block = TransformerBlock(d_model, num_heads, ff_dim, dropout_rate)
+        x = transformer_block(x)
+    
+    # Global average pooling
+    x = GlobalAveragePooling1D()(x)
+    
+    # Classification/regression head
+    x = Dense(64, activation='relu')(x)
+    x = Dropout(dropout_rate)(x)
+    x = Dense(32, activation='relu')(x)
+    x = Dropout(dropout_rate/2)(x)
+    
+    if task_type == 'classification':
+        outputs = Dense(1, activation='sigmoid')(x)
+    else:
+        outputs = Dense(1, activation='linear')(x)
+    
+    model = Model(inputs, outputs, name='InjuryPredictionTransformer')
+    return model
+
+def create_attention_lstm(seq_len, n_features, lstm_units=64, 
+                         dropout_rate=0.3, task_type='classification'):
+    """Create LSTM with attention mechanism"""
+    inputs = Input(shape=(seq_len, n_features))
+    
+    # Bidirectional LSTM
+    lstm_out = Bidirectional(LSTM(lstm_units, return_sequences=True, dropout=dropout_rate))(inputs)
+    
+    # Attention mechanism
+    attention_weights = Dense(1, activation='tanh')(lstm_out)
+    attention_weights = tf.nn.softmax(attention_weights, axis=1)
+    
+    # Apply attention
+    attended_output = tf.reduce_sum(lstm_out * attention_weights, axis=1)
+    
+    # Dense layers
+    x = Dense(64, activation='relu')(attended_output)
+    x = Dropout(dropout_rate)(x)
+    x = Dense(32, activation='relu')(x)
+    x = Dropout(dropout_rate/2)(x)
+    
+    if task_type == 'classification':
+        outputs = Dense(1, activation='sigmoid')(x)
+    else:
+        outputs = Dense(1, activation='linear')(x)
+    
+    model = Model(inputs, outputs, name='AttentionLSTM')
+    return model
+
+def create_cnn_lstm_hybrid(seq_len, n_features, filters=32, kernel_size=3,
+                          lstm_units=64, dropout_rate=0.3, task_type='classification'):
+    """Create CNN-LSTM hybrid for spatial-temporal pattern learning"""
+    inputs = Input(shape=(seq_len, n_features))
+    
+    # CNN layers for local pattern extraction
+    x = Conv1D(filters=filters, kernel_size=kernel_size, activation='relu', padding='same')(inputs)
+    x = BatchNormalization()(x)
+    x = Dropout(dropout_rate/2)(x)
+    
+    x = Conv1D(filters=filters*2, kernel_size=kernel_size, activation='relu', padding='same')(x)
+    x = BatchNormalization()(x)
+    x = Dropout(dropout_rate/2)(x)
+    
+    # LSTM for temporal dependencies
+    x = LSTM(lstm_units, return_sequences=False, dropout=dropout_rate)(x)
+    
+    # Dense layers
+    x = Dense(64, activation='relu')(x)
+    x = Dropout(dropout_rate)(x)
+    x = Dense(32, activation='relu')(x)
+    x = Dropout(dropout_rate/2)(x)
+    
+    if task_type == 'classification':
+        outputs = Dense(1, activation='sigmoid')(x)
+    else:
+        outputs = Dense(1, activation='linear')(x)
+    
+    model = Model(inputs, outputs, name='CNN_LSTM_Hybrid')
+    return model
+
+def create_residual_medical_ann(n_features, hidden_sizes=[128, 64, 32], 
+                               dropout_rates=[0.3, 0.2, 0.1], 
+                               task_type='classification'):
+    """Create Medical ANN with ResNet-style skip connections"""
+    inputs = Input(shape=(n_features,))
+    
+    x = inputs
+    for i, (hidden_size, dropout_rate) in enumerate(zip(hidden_sizes, dropout_rates)):
+        # Dense block
+        dense_out = Dense(hidden_size, activation='relu', 
+                         kernel_regularizer=l1_l2(l1=1e-5, l2=1e-4))(x)
+        dense_out = BatchNormalization()(dense_out)
+        dense_out = Dropout(dropout_rate)(dense_out)
+        
+        # Skip connection (if dimensions match)
+        if x.shape[-1] == hidden_size:
+            x = Add()([x, dense_out])
+        else:
+            # Projection for skip connection
+            skip = Dense(hidden_size, activation='linear')(x)
+            x = Add()([skip, dense_out])
+        
+        x = LayerNormalization()(x)
+    
+    # Output layer
+    if task_type == 'classification':
+        outputs = Dense(1, activation='sigmoid', name='prediction')(x)
+    else:
+        outputs = Dense(1, activation='linear', name='prediction')(x)
+    
+    model = Model(inputs, outputs, name='ResidualMedicalANN')
+    return model
 
 # Data Loading
 @st.cache_data
@@ -1062,6 +1277,625 @@ elif page == "Feature Importance":
         for feature, importance in top_features.items():
             interpretation = interpretations.get(feature, 'Feature requires domain expert analysis')
             st.write(f"**{feature}** ({importance:.3f}): {interpretation}")
+
+# Advanced NNDL Models Page
+elif page == "Advanced NNDL Models":
+    st.header("Advanced Neural Networks & Deep Learning Models")
+    
+    if not TF_AVAILABLE:
+        st.error("TensorFlow not available. Please install: pip install tensorflow")
+    else:
+        st.write("""
+        Cutting-edge neural network architectures for injury prediction, featuring:
+        - **Transformer Models**: Self-attention for capturing complex temporal relationships
+        - **Attention-based LSTM**: Enhanced sequence modeling with attention mechanisms  
+        - **CNN-LSTM Hybrid**: Spatial-temporal pattern recognition
+        - **Residual Medical ANN**: Skip connections for better gradient flow
+        """)
+        
+        # Model selection
+        advanced_model = st.selectbox("Select Advanced Model:", [
+            "Transformer", "Attention LSTM", "CNN-LSTM Hybrid", "Residual Medical ANN"
+        ])
+        
+        target_type = st.selectbox("Target:", ["Severe Injury", "Mild Injury", "Regression"])
+        
+        # Model-specific configurations
+        if advanced_model == "Transformer":
+            with st.expander("Transformer Configuration"):
+                d_model = st.slider("Model dimension", 32, 128, 64)
+                num_heads = st.selectbox("Attention heads", [2, 4, 8], index=1)
+                num_layers = st.slider("Transformer layers", 1, 4, 2)
+                ff_dim = st.slider("Feed-forward dimension", 64, 256, 128)
+                dropout_rate = st.slider("Dropout rate", 0.1, 0.5, 0.2)
+        
+        elif advanced_model == "Attention LSTM":
+            with st.expander("Attention LSTM Configuration"):
+                lstm_units = st.slider("LSTM units", 32, 128, 64)
+                dropout_rate = st.slider("Dropout rate", 0.1, 0.5, 0.3)
+        
+        elif advanced_model == "CNN-LSTM Hybrid":
+            with st.expander("CNN-LSTM Configuration"):
+                filters = st.slider("CNN filters", 16, 64, 32)
+                kernel_size = st.slider("Kernel size", 2, 5, 3)
+                lstm_units = st.slider("LSTM units", 32, 128, 64)
+                dropout_rate = st.slider("Dropout rate", 0.1, 0.5, 0.3)
+        
+        else:  # Residual Medical ANN
+            with st.expander("Residual ANN Configuration"):
+                layer_1 = st.slider("Layer 1 size", 64, 256, 128)
+                layer_2 = st.slider("Layer 2 size", 32, 128, 64)
+                layer_3 = st.slider("Layer 3 size", 16, 64, 32)
+                dropout_1 = st.slider("Dropout 1", 0.1, 0.5, 0.3)
+                dropout_2 = st.slider("Dropout 2", 0.1, 0.5, 0.2)
+                dropout_3 = st.slider("Dropout 3", 0.05, 0.3, 0.1)
+        
+        # Training configuration
+        with st.expander("Advanced Training Configuration"):
+            optimizer_type = st.selectbox("Optimizer", ["Adam", "RMSprop", "SGD"])
+            learning_rate = st.selectbox("Learning rate", [0.001, 0.0001, 0.00001], index=1)
+            use_warmup = st.checkbox("Use learning rate warmup", value=True)
+            use_gradient_clipping = st.checkbox("Use gradient clipping", value=True)
+            epochs = st.slider("Max epochs", 50, 200, 100)
+            batch_size = st.selectbox("Batch size", [16, 32, 64], index=1)
+        
+        if st.button(f"Train {advanced_model}"):
+            # Select target
+            if target_type == "Severe Injury":
+                target_col = TARGET_CLASSIFICATION_SEVERE
+                task_type = 'classification'
+            elif target_type == "Mild Injury":
+                target_col = TARGET_CLASSIFICATION_MILD
+                task_type = 'classification'
+            else:
+                target_col = TARGET_REGRESSION
+                task_type = 'regression'
+            
+            if advanced_model in ["Transformer", "Attention LSTM", "CNN-LSTM Hybrid"]:
+                # Sequential models need sequence preparation
+                seq_len = 3
+                df_sorted = df.sort_values(['p_id2', 'start_year'])
+                
+                # Create sequences
+                sequences, targets, player_ids = [], [], []
+                
+                for player_id, group in df_sorted.groupby('p_id2'):
+                    group = group.sort_values('start_year')
+                    
+                    if len(group) >= seq_len:
+                        for i in range(len(group) - seq_len + 1):
+                            seq_data = group.iloc[i:i+seq_len][ALL_FEATURES].values
+                            target_val = group.iloc[i+seq_len-1][target_col]
+                            
+                            sequences.append(seq_data)
+                            targets.append(target_val)
+                            player_ids.append(player_id)
+                
+                if len(sequences) < 50:
+                    st.error(f"Insufficient sequences: {len(sequences)}. Need at least 50 for training.")
+                    st.stop()
+                
+                X = np.array(sequences, dtype=np.float32)
+                y = np.array(targets, dtype=np.float32)
+                player_ids = np.array(player_ids)
+                
+                # Player-based split
+                unique_players = np.unique(player_ids)
+                n_train_players = int(0.8 * len(unique_players))
+                
+                np.random.seed(42)
+                train_players = np.random.choice(unique_players, n_train_players, replace=False)
+                
+                train_mask = np.isin(player_ids, train_players)
+                X_train, X_test = X[train_mask], X[~train_mask]
+                y_train, y_test = y[train_mask], y[~train_mask]
+                
+                # Feature normalization
+                X_train_mean = X_train.mean(axis=(0,1), keepdims=True)
+                X_train_std = X_train.std(axis=(0,1), keepdims=True) + 1e-8
+                
+                X_train_norm = (X_train - X_train_mean) / X_train_std
+                X_test_norm = (X_test - X_train_mean) / X_train_std
+                
+                # Create model
+                if advanced_model == "Transformer":
+                    model = create_transformer_model(
+                        seq_len, len(ALL_FEATURES), d_model, num_heads, 
+                        ff_dim, num_layers, dropout_rate, task_type
+                    )
+                elif advanced_model == "Attention LSTM":
+                    model = create_attention_lstm(
+                        seq_len, len(ALL_FEATURES), lstm_units, dropout_rate, task_type
+                    )
+                else:  # CNN-LSTM Hybrid
+                    model = create_cnn_lstm_hybrid(
+                        seq_len, len(ALL_FEATURES), filters, kernel_size,
+                        lstm_units, dropout_rate, task_type
+                    )
+                
+                X_train_final, X_test_final = X_train_norm, X_test_norm
+                
+            else:  # Residual Medical ANN
+                # Use regular tabular data
+                train_df, test_df = proper_player_split(df, 0.2)
+                
+                X_train = train_df[ALL_FEATURES].values
+                X_test = test_df[ALL_FEATURES].values
+                y_train = train_df[target_col].values
+                y_test = test_df[target_col].values
+                
+                # Feature scaling
+                scaler = StandardScaler()
+                X_train_final = scaler.fit_transform(X_train)
+                X_test_final = scaler.transform(X_test)
+                
+                # Create model
+                model = create_residual_medical_ann(
+                    len(ALL_FEATURES), [layer_1, layer_2, layer_3],
+                    [dropout_1, dropout_2, dropout_3], task_type
+                )
+            
+            # Configure optimizer
+            if optimizer_type == "Adam":
+                opt = Adam(learning_rate=learning_rate, clipnorm=1.0 if use_gradient_clipping else None)
+            elif optimizer_type == "RMSprop":
+                opt = RMSprop(learning_rate=learning_rate, clipnorm=1.0 if use_gradient_clipping else None)
+            else:
+                opt = SGD(learning_rate=learning_rate, momentum=0.9, clipnorm=1.0 if use_gradient_clipping else None)
+            
+            # Compile model
+            if task_type == 'classification':
+                model.compile(optimizer=opt, loss='binary_crossentropy', 
+                            metrics=['accuracy', 'precision', 'recall'])
+            else:
+                model.compile(optimizer=opt, loss='mse', metrics=['mae'])
+            
+            # Callbacks
+            callbacks = [
+                EarlyStopping(patience=20, restore_best_weights=True, monitor='val_loss', verbose=1),
+                ReduceLROnPlateau(patience=10, factor=0.5, min_lr=1e-8, verbose=1)
+            ]
+            
+            if use_warmup:
+                warmup_callback = LearningRateWarmup(
+                    warmup_steps=10, peak_lr=learning_rate, total_steps=epochs
+                )
+                callbacks.append(warmup_callback)
+            
+            # Train model
+            with st.spinner(f"Training {advanced_model}..."):
+                history = model.fit(
+                    X_train_final, y_train,
+                    validation_split=0.2,
+                    epochs=epochs,
+                    batch_size=batch_size,
+                    callbacks=callbacks,
+                    verbose=0
+                )
+            
+            # Predictions
+            y_pred = model.predict(X_test_final, verbose=0).ravel()
+            
+            # Evaluation
+            if task_type == 'classification':
+                y_pred_class = (y_pred >= 0.5).astype(int)
+                metrics = evaluate_metrics(y_test, y_pred_class, y_pred, task='classification')
+                
+                st.subheader(f"{advanced_model} Classification Results")
+                results_df = pd.DataFrame(metrics, index=[advanced_model]).round(4)
+                st.dataframe(results_df)
+                
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    plot_comparison(y_test, y_pred, f"{advanced_model} ROC", 'classification')
+                
+                with col2:
+                    # Confusion matrix
+                    cm = confusion_matrix(y_test, y_pred_class)
+                    
+                    fig, ax = plt.subplots(figsize=(6, 5))
+                    im = ax.imshow(cm, interpolation='nearest', cmap='Blues')
+                    ax.figure.colorbar(im, ax=ax)
+                    
+                    ax.set(xticks=np.arange(cm.shape[1]),
+                           yticks=np.arange(cm.shape[0]),
+                           xticklabels=['No Injury', 'Injury'],
+                           yticklabels=['No Injury', 'Injury'],
+                           title=f'{advanced_model} Confusion Matrix',
+                           ylabel='True Label',
+                           xlabel='Predicted Label')
+                    
+                    for i in range(cm.shape[0]):
+                        for j in range(cm.shape[1]):
+                            ax.text(j, i, format(cm[i, j], 'd'),
+                                   ha="center", va="center", color="black")
+                    
+                    plt.tight_layout()
+                    st.pyplot(fig)
+            
+            else:
+                metrics = evaluate_metrics(y_test, y_pred, task='regression')
+                
+                st.subheader(f"{advanced_model} Regression Results")
+                results_df = pd.DataFrame(metrics, index=[advanced_model]).round(4)
+                st.dataframe(results_df)
+                
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    plot_comparison(y_test, y_pred, f"{advanced_model} Predictions", 'regression')
+                
+                with col2:
+                    # Residual analysis
+                    residuals = y_test - y_pred
+                    fig, ax = plt.subplots(figsize=(6, 5))
+                    ax.scatter(y_pred, residuals, alpha=0.6)
+                    ax.axhline(y=0, color='red', linestyle='--')
+                    ax.set_xlabel('Predicted Values')
+                    ax.set_ylabel('Residuals')
+                    ax.set_title(f'{advanced_model} Residual Analysis')
+                    ax.grid(True, alpha=0.3)
+                    st.pyplot(fig)
+            
+            # Training history visualization
+            st.subheader("Training Analysis")
+            
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                fig, ax = plt.subplots(figsize=(8, 5))
+                ax.plot(history.history['loss'], label='Training Loss', alpha=0.8)
+                if 'val_loss' in history.history:
+                    ax.plot(history.history['val_loss'], label='Validation Loss', alpha=0.8)
+                ax.set_xlabel('Epoch')
+                ax.set_ylabel('Loss')
+                ax.set_title(f'{advanced_model} Training Loss')
+                ax.legend()
+                ax.grid(True, alpha=0.3)
+                st.pyplot(fig)
+            
+            with col2:
+                if task_type == 'classification':
+                    fig, ax = plt.subplots(figsize=(8, 5))
+                    ax.plot(history.history['accuracy'], label='Training Accuracy', alpha=0.8)
+                    if 'val_accuracy' in history.history:
+                        ax.plot(history.history['val_accuracy'], label='Validation Accuracy', alpha=0.8)
+                    ax.set_xlabel('Epoch')
+                    ax.set_ylabel('Accuracy')
+                    ax.set_title(f'{advanced_model} Training Accuracy')
+                    ax.legend()
+                    ax.grid(True, alpha=0.3)
+                    st.pyplot(fig)
+                else:
+                    fig, ax = plt.subplots(figsize=(8, 5))
+                    ax.plot(history.history['mae'], label='Training MAE', alpha=0.8)
+                    if 'val_mae' in history.history:
+                        ax.plot(history.history['val_mae'], label='Validation MAE', alpha=0.8)
+                    ax.set_xlabel('Epoch')
+                    ax.set_ylabel('MAE')
+                    ax.set_title(f'{advanced_model} Training MAE')
+                    ax.legend()
+                    ax.grid(True, alpha=0.3)
+                    st.pyplot(fig)
+            
+            # Model architecture summary
+            st.subheader("Model Architecture")
+            st.text(model.summary())
+
+# Model Ensemble Page
+elif page == "Model Ensemble":
+    st.header("Neural Network Ensemble Methods")
+    
+    if not TF_AVAILABLE:
+        st.error("TensorFlow not available. Please install: pip install tensorflow")
+    else:
+        st.write("""
+        Ensemble multiple neural networks for improved prediction performance:
+        - **Voting Ensemble**: Combine predictions from multiple models
+        - **Stacking Ensemble**: Train a meta-learner on base model predictions
+        - **Weighted Ensemble**: Learn optimal weights for model combination
+        """)
+        
+        ensemble_type = st.selectbox("Ensemble Type:", [
+            "Voting Ensemble", "Stacking Ensemble", "Weighted Ensemble"
+        ])
+        
+        target_type = st.selectbox("Target:", ["Severe Injury", "Mild Injury", "Regression"])
+        
+        # Model selection for ensemble
+        st.subheader("Select Base Models")
+        use_lstm = st.checkbox("Include LSTM", value=True)
+        use_transformer = st.checkbox("Include Transformer", value=True)
+        use_medical_ann = st.checkbox("Include Medical ANN", value=True)
+        use_attention_lstm = st.checkbox("Include Attention LSTM", value=False)
+        
+        if not any([use_lstm, use_transformer, use_medical_ann, use_attention_lstm]):
+            st.warning("Please select at least one model for the ensemble.")
+        
+        with st.expander("Ensemble Configuration"):
+            ensemble_epochs = st.slider("Training epochs", 50, 150, 100)
+            ensemble_batch_size = st.selectbox("Batch size", [16, 32, 64], index=1)
+            validation_split = st.slider("Validation split", 0.1, 0.3, 0.2)
+        
+        if st.button("Train Ensemble"):
+            # Select target
+            if target_type == "Severe Injury":
+                target_col = TARGET_CLASSIFICATION_SEVERE
+                task_type = 'classification'
+            elif target_type == "Mild Injury":
+                target_col = TARGET_CLASSIFICATION_MILD
+                task_type = 'classification'
+            else:
+                target_col = TARGET_REGRESSION
+                task_type = 'regression'
+            
+            models = []
+            model_names = []
+            
+            # Prepare data for both sequential and tabular models
+            train_df, test_df = proper_player_split(df, 0.2)
+            
+            # Tabular data
+            X_train_tab = train_df[ALL_FEATURES].values
+            X_test_tab = test_df[ALL_FEATURES].values
+            y_train = train_df[target_col].values
+            y_test = test_df[target_col].values
+            
+            scaler = StandardScaler()
+            X_train_tab_scaled = scaler.fit_transform(X_train_tab)
+            X_test_tab_scaled = scaler.transform(X_test_tab)
+            
+            # Sequential data
+            seq_len = 3
+            df_sorted = df.sort_values(['p_id2', 'start_year'])
+            sequences, targets, player_ids = [], [], []
+            
+            for player_id, group in df_sorted.groupby('p_id2'):
+                group = group.sort_values('start_year')
+                if len(group) >= seq_len:
+                    for i in range(len(group) - seq_len + 1):
+                        seq_data = group.iloc[i:i+seq_len][ALL_FEATURES].values
+                        target_val = group.iloc[i+seq_len-1][target_col]
+                        sequences.append(seq_data)
+                        targets.append(target_val)
+                        player_ids.append(player_id)
+            
+            if len(sequences) >= 50:
+                X_seq = np.array(sequences, dtype=np.float32)
+                y_seq = np.array(targets, dtype=np.float32)
+                player_ids = np.array(player_ids)
+                
+                unique_players = np.unique(player_ids)
+                n_train_players = int(0.8 * len(unique_players))
+                
+                np.random.seed(42)
+                train_players = np.random.choice(unique_players, n_train_players, replace=False)
+                
+                train_mask = np.isin(player_ids, train_players)
+                X_train_seq, X_test_seq = X_seq[train_mask], X_seq[~train_mask]
+                y_train_seq, y_test_seq = y_seq[train_mask], y_seq[~train_mask]
+                
+                # Normalize sequences
+                X_train_mean = X_train_seq.mean(axis=(0,1), keepdims=True)
+                X_train_std = X_train_seq.std(axis=(0,1), keepdims=True) + 1e-8
+                
+                X_train_seq_norm = (X_train_seq - X_train_mean) / X_train_std
+                X_test_seq_norm = (X_test_seq - X_train_mean) / X_train_std
+            
+            with st.spinner("Training ensemble models..."):
+                # Train selected models
+                if use_medical_ann:
+                    medical_model = create_residual_medical_ann(
+                        len(ALL_FEATURES), task_type=task_type
+                    )
+                    medical_model.compile(
+                        optimizer=Adam(learning_rate=0.001),
+                        loss='binary_crossentropy' if task_type=='classification' else 'mse',
+                        metrics=['accuracy'] if task_type=='classification' else ['mae']
+                    )
+                    medical_model.fit(
+                        X_train_tab_scaled, y_train,
+                        validation_split=validation_split,
+                        epochs=ensemble_epochs,
+                        batch_size=ensemble_batch_size,
+                        verbose=0
+                    )
+                    models.append(('Medical ANN', medical_model, X_test_tab_scaled))
+                    model_names.append('Medical ANN')
+                
+                if len(sequences) >= 50:
+                    if use_lstm:
+                        lstm_model = Sequential([
+                            LSTM(64, return_sequences=True, input_shape=(seq_len, len(ALL_FEATURES))),
+                            Dropout(0.3),
+                            LSTM(32, return_sequences=False),
+                            Dropout(0.3),
+                            Dense(32, activation='relu'),
+                            Dense(1, activation='sigmoid' if task_type=='classification' else 'linear')
+                        ])
+                        lstm_model.compile(
+                            optimizer=Adam(learning_rate=0.001),
+                            loss='binary_crossentropy' if task_type=='classification' else 'mse',
+                            metrics=['accuracy'] if task_type=='classification' else ['mae']
+                        )
+                        lstm_model.fit(
+                            X_train_seq_norm, y_train_seq,
+                            validation_split=validation_split,
+                            epochs=ensemble_epochs,
+                            batch_size=ensemble_batch_size,
+                            verbose=0
+                        )
+                        models.append(('LSTM', lstm_model, X_test_seq_norm))
+                        model_names.append('LSTM')
+                    
+                    if use_transformer:
+                        transformer_model = create_transformer_model(
+                            seq_len, len(ALL_FEATURES), task_type=task_type
+                        )
+                        transformer_model.compile(
+                            optimizer=Adam(learning_rate=0.001),
+                            loss='binary_crossentropy' if task_type=='classification' else 'mse',
+                            metrics=['accuracy'] if task_type=='classification' else ['mae']
+                        )
+                        transformer_model.fit(
+                            X_train_seq_norm, y_train_seq,
+                            validation_split=validation_split,
+                            epochs=ensemble_epochs,
+                            batch_size=ensemble_batch_size,
+                            verbose=0
+                        )
+                        models.append(('Transformer', transformer_model, X_test_seq_norm))
+                        model_names.append('Transformer')
+                    
+                    if use_attention_lstm:
+                        attention_model = create_attention_lstm(
+                            seq_len, len(ALL_FEATURES), task_type=task_type
+                        )
+                        attention_model.compile(
+                            optimizer=Adam(learning_rate=0.001),
+                            loss='binary_crossentropy' if task_type=='classification' else 'mse',
+                            metrics=['accuracy'] if task_type=='classification' else ['mae']
+                        )
+                        attention_model.fit(
+                            X_train_seq_norm, y_train_seq,
+                            validation_split=validation_split,
+                            epochs=ensemble_epochs,
+                            batch_size=ensemble_batch_size,
+                            verbose=0
+                        )
+                        models.append(('Attention LSTM', attention_model, X_test_seq_norm))
+                        model_names.append('Attention LSTM')
+            
+            if len(models) == 0:
+                st.error("No models were successfully trained.")
+            else:
+                # Generate predictions from all models
+                all_predictions = []
+                for name, model, X_test_data in models:
+                    pred = model.predict(X_test_data, verbose=0).ravel()
+                    all_predictions.append(pred)
+                
+                # For ensemble, we need a common test set
+                # Use the Medical ANN test set as the reference
+                y_test_final = y_test
+                
+                if ensemble_type == "Voting Ensemble":
+                    # Simple average
+                    ensemble_pred = np.mean(all_predictions, axis=0)
+                    
+                elif ensemble_type == "Weighted Ensemble":
+                    # Learn optimal weights (simple approach)
+                    from sklearn.linear_model import LinearRegression
+                    
+                    # Create meta-features from predictions
+                    meta_features = np.column_stack(all_predictions)
+                    
+                    # Use cross-validation to learn weights
+                    meta_model = LinearRegression()
+                    meta_model.fit(meta_features, y_test_final)
+                    
+                    ensemble_pred = meta_model.predict(meta_features)
+                    
+                    st.subheader("Ensemble Weights")
+                    weights_df = pd.DataFrame({
+                        'Model': model_names,
+                        'Weight': meta_model.coef_
+                    })
+                    st.dataframe(weights_df)
+                
+                else:  # Stacking Ensemble
+                    # Simple stacking with neural network meta-learner
+                    meta_features = np.column_stack(all_predictions)
+                    
+                    meta_model = Sequential([
+                        Dense(16, activation='relu', input_shape=(len(models),)),
+                        Dropout(0.2),
+                        Dense(8, activation='relu'),
+                        Dense(1, activation='sigmoid' if task_type=='classification' else 'linear')
+                    ])
+                    
+                    meta_model.compile(
+                        optimizer=Adam(learning_rate=0.001),
+                        loss='binary_crossentropy' if task_type=='classification' else 'mse',
+                        metrics=['accuracy'] if task_type=='classification' else ['mae']
+                    )
+                    
+                    meta_model.fit(
+                        meta_features, y_test_final,
+                        epochs=50,
+                        batch_size=32,
+                        verbose=0
+                    )
+                    
+                    ensemble_pred = meta_model.predict(meta_features, verbose=0).ravel()
+                
+                # Evaluate ensemble
+                if task_type == 'classification':
+                    ensemble_pred_class = (ensemble_pred >= 0.5).astype(int)
+                    metrics = evaluate_metrics(y_test_final, ensemble_pred_class, ensemble_pred, task='classification')
+                    
+                    st.subheader(f"{ensemble_type} Results")
+                    results_df = pd.DataFrame(metrics, index=[ensemble_type]).round(4)
+                    st.dataframe(results_df)
+                    
+                    # Individual model comparison
+                    individual_results = {}
+                    for i, (name, model, X_test_data) in enumerate(models):
+                        pred = all_predictions[i]
+                        if len(pred) == len(y_test_final):  # Ensure same length
+                            pred_class = (pred >= 0.5).astype(int)
+                            individual_metrics = evaluate_metrics(y_test_final, pred_class, pred, task='classification')
+                            individual_results[name] = individual_metrics
+                    
+                    if individual_results:
+                        st.subheader("Individual Model Comparison")
+                        comparison_df = pd.DataFrame(individual_results).T.round(4)
+                        
+                        # Add ensemble results
+                        ensemble_row = pd.DataFrame(metrics, index=[ensemble_type]).round(4)
+                        comparison_df = pd.concat([comparison_df, ensemble_row])
+                        
+                        st.dataframe(comparison_df)
+                        
+                        # Highlight best model
+                        best_auc_model = comparison_df['AUC'].idxmax()
+                        st.success(f"Best AUC: {best_auc_model} ({comparison_df.loc[best_auc_model, 'AUC']:.4f})")
+                
+                else:
+                    metrics = evaluate_metrics(y_test_final, ensemble_pred, task='regression')
+                    
+                    st.subheader(f"{ensemble_type} Results")
+                    results_df = pd.DataFrame(metrics, index=[ensemble_type]).round(4)
+                    st.dataframe(results_df)
+                
+                # Visualizations
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    if task_type == 'classification':
+                        plot_comparison(y_test_final, ensemble_pred, f"{ensemble_type} ROC", 'classification')
+                    else:
+                        plot_comparison(y_test_final, ensemble_pred, f"{ensemble_type} Predictions", 'regression')
+                
+                with col2:
+                    # Model agreement analysis
+                    fig, ax = plt.subplots(figsize=(6, 5))
+                    
+                    if len(models) >= 2:
+                        # Scatter plot of first two models' predictions
+                        ax.scatter(all_predictions[0], all_predictions[1], alpha=0.6)
+                        ax.set_xlabel(f'{model_names[0]} Predictions')
+                        ax.set_ylabel(f'{model_names[1]} Predictions')
+                        ax.set_title('Model Agreement Analysis')
+                        
+                        # Add correlation
+                        corr = np.corrcoef(all_predictions[0], all_predictions[1])[0, 1]
+                        ax.text(0.05, 0.95, f'Correlation: {corr:.3f}', 
+                               transform=ax.transAxes, bbox=dict(boxstyle="round", facecolor='wheat'))
+                    
+                    ax.grid(True, alpha=0.3)
+                    st.pyplot(fig)
 
 # Sidebar enhancements
 st.sidebar.markdown("---")
