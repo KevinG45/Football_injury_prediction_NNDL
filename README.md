@@ -36,14 +36,18 @@ Our dataset includes:
 - Other models (like CNNs) are better for images, but we need brains, not eyes!
 
 ## Results
-- Accurate injury predictions
+- Accurate injury predictions (87.7% accuracy, 0.596 AUC on severe injury classification)
 - Insights for coaches and medical staff
 - A fun way to combine football and AI!
 
+## Detailed Project Overview
+For a complete technical breakdown — including all model architectures, metrics, feature importance rankings, resume-ready bullet points, and pitch content — see **[PROJECT_OVERVIEW.md](PROJECT_OVERVIEW.md)**.
+
 ## How to Use
 1. Clone the repo
-2. Run the Python scripts
-3. Explore the predictions and visualizations
+2. Install dependencies: `pip install streamlit pandas numpy scikit-learn matplotlib seaborn imbalanced-learn tensorflow`
+3. Run the app: `streamlit run improved_football_injury_app.py`
+4. Explore the predictions and visualizations
 
 ## Meet the Team
 - Data Scientists ⚗️
